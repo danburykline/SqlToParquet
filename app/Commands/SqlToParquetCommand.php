@@ -10,6 +10,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use LaravelZero\Framework\Commands\Command;
+use mysql_xdevapi\BaseResult;
 use function Termwind\{render};
 
 class SqlToParquetCommand extends Command
@@ -28,6 +29,9 @@ class SqlToParquetCommand extends Command
      */
     protected $description = 'Reads data from Database formats it into parquet and uploads it to s3.';
 
+    /** @var string */
+    private const ARCHIVE_TABLE_TO_KEEP = 'rpt_handover_cert_archive';
+
     /**
      * Execute the console command.
      *
@@ -39,6 +43,10 @@ class SqlToParquetCommand extends Command
         $db = 'Tables_in_'.DB::getDatabaseName();
         foreach ($tables as $table) {
             $table = $table->{$db};
+
+            if (str_ends_with($table, '_archive') && $table != self::ARCHIVE_TABLE_TO_KEEP) {
+                continue;
+            }
 
             $columns = DB::select('SHOW COLUMNS FROM ' . $table);
 
