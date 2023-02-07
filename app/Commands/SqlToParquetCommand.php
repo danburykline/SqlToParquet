@@ -7,10 +7,13 @@ use codename\parquet\data\DataField;
 use codename\parquet\data\Schema;
 use codename\parquet\ParquetWriter;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use LaravelZero\Framework\Commands\Command;
 use mysql_xdevapi\BaseResult;
+use PHPUnit\Exception;
+use ZipArchive;
 use function Termwind\{render};
 
 class SqlToParquetCommand extends Command
@@ -41,6 +44,12 @@ class SqlToParquetCommand extends Command
     {
         $tables = DB::select('SHOW TABLES');
         $db = 'Tables_in_'.DB::getDatabaseName();
+
+        // database format soros_swr_stg_2023_01_17_15-02
+        $dbSplit = explode("_", DB::getDatabaseName());
+        $dbClient = $dbSplit[1];
+        $dbEnv = $dbSplit[2];
+
         foreach ($tables as $table) {
             $table = $table->{$db};
 
@@ -83,8 +92,11 @@ class SqlToParquetCommand extends Command
 
             $this->info('Created parquet file for table: ' . $table);
 
+            $filePath = $dbClient .'/'. $dbEnv .'/'.$fileName;
+            $fileContent = fopen(__DIR__.'/'. $fileName, 'r+');
+
             // uploads file to S3.
-            Storage::disk('s3')-> put($fileName, __DIR__.'/'. $fileName);
+            Storage::disk('s3')-> put($filePath, $fileContent);
             $this->info('Filename: ' . $table  .' uploaded to s3');
 
             $this->deleteFile($fileName, $table);
