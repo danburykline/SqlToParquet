@@ -50,6 +50,13 @@ class SqlToParquetCommand extends Command
         $dbClient = $dbSplit[1];
         $dbEnv = $dbSplit[2];
 
+        $dbYear = $dbSplit[3];
+        $dbMonth = $dbSplit[4];
+        $dbDay = $dbSplit[5];
+        $dbTime = str_replace('-', ':', $dbSplit[6]) . ':00';
+
+        $dbDateTime = $dbYear .'-'. $dbMonth .'-'. $dbDay .' '. $dbTime;
+
         foreach ($tables as $table) {
             $table = $table->{$db};
 
@@ -63,13 +70,25 @@ class SqlToParquetCommand extends Command
             $groups = [];
 
             foreach ($columns as $column) {
-                $data = DB::table($table)->pluck($column->Field)->toArray();
+                $tableData = DB::table($table)->pluck($column->Field)->toArray();
+
+                // converts to time (number) format.
+                if ($column->Type == 'datetime' || $column->Type == 'time' || $column->Type == 'date') {
+                    if (!empty($tableData)) {
+                        foreach ($tableData as &$data) {
+                            if ($data) {
+                                $formattedDate =  strtotime($data);
+                                $data = $formattedDate;
+                            }
+                        }
+                    }
+                }
 
                 $field = $column->Field;
 
                 $type = $this->sqlFormatToPhpFormat($column->Type);
 
-                $dataColumn = new DataColumn(DataField::createFromType($field, $type), $data);
+                $dataColumn = new DataColumn(DataField::createFromType($field, $type), $tableData);
 
                 array_push($schema, $dataColumn->getField());
                 array_push($groups, $dataColumn);
@@ -80,7 +99,10 @@ class SqlToParquetCommand extends Command
             $fileName = DB::getDatabaseName() . '_' . $table . '.parquet';
             $fileStream = fopen(__DIR__.'/'. $fileName, 'w+');
 
+            $metadata = ['author'=>'danburykline', 'dateTime' => $dbDateTime];
+
             $parquetWriter = new ParquetWriter($schema, $fileStream);
+            $parquetWriter->setCustomMetadata($metadata);
             $groupWriter = $parquetWriter->CreateRowGroup();
 
             foreach ($groups as $group) {
@@ -92,7 +114,7 @@ class SqlToParquetCommand extends Command
 
             $this->info('Created parquet file for table: ' . $table);
 
-            $filePath = $dbClient .'/'. $dbEnv .'/'.$fileName;
+            $filePath = $dbEnv .'/'. $dbClient .'/'.$fileName;
             $fileContent = fopen(__DIR__.'/'. $fileName, 'r+');
 
             // uploads file to S3.
@@ -139,6 +161,7 @@ class SqlToParquetCommand extends Command
      * Return SQL data type in acceptable PHP format
      *
      * @param $type
+     *
      * @return string
      */
     private function sqlFormatToPhpFormat($type)
@@ -159,9 +182,9 @@ class SqlToParquetCommand extends Command
                 'decimal(11,2)' => 'decimal',
                 'timestamp' => 'string',
                 'text' => 'string',
-                'date' => 'string',
-                'time' => 'string',
-                'datetime' => 'string',
+                'date' => 'long',
+                'time' => 'long',
+                'datetime' => 'long',
                 'float' => 'float',
             };
         }
