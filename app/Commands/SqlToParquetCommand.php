@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Storage;
 use LaravelZero\Framework\Commands\Command;
 use mysql_xdevapi\BaseResult;
 use PHPUnit\Exception;
+use stdClass;
 use ZipArchive;
 use function Termwind\{render};
 
@@ -65,19 +66,47 @@ class SqlToParquetCommand extends Command
             }
 
             $columns = DB::select('SHOW COLUMNS FROM ' . $table);
+            $rows = DB::table($table)->count();
+
+            $parquetClientObject = new stdClass();
+            $parquetClientObject->Field = 'parquet_client';
+            $parquetClientObject->Type = 'varchar(50)';
+
+            $parquetDatetimeObject = new stdClass();
+            $parquetDatetimeObject->Field = 'parquet_datetime';
+            $parquetDatetimeObject->Type = 'datetime';
+
+            array_push($columns, $parquetClientObject, $parquetDatetimeObject);
 
             $schema = [];
             $groups = [];
 
+            $parquetClientTableData = [];
+            $parquetDatetimeTableData = [];
+
+            for ($x = 0; $x < $rows; $x++) {
+                array_push($parquetClientTableData, $dbClient);
+                array_push($parquetDatetimeTableData, $dbDateTime);
+            }
+
             foreach ($columns as $column) {
-                $tableData = DB::table($table)->pluck($column->Field)->toArray();
+                switch ($column->Field) {
+                    case 'parquet_client':
+                        $tableData = $parquetClientTableData;
+                        break;
+                    case 'parquet_datetime':
+                        $tableData = $parquetDatetimeTableData;
+                        break;
+                    default:
+                        $tableData = DB::table($table)->pluck($column->Field)->toArray();
+                }
 
                 // converts to time (number) format.
                 if ($column->Type == 'datetime' || $column->Type == 'time' || $column->Type == 'date') {
                     if (!empty($tableData)) {
                         foreach ($tableData as &$data) {
                             if ($data) {
-                                $formattedDate =  strtotime($data);
+                                $formattedDate = strtotime($data);
                                 $data = $formattedDate;
                             }
                         }
@@ -97,12 +126,9 @@ class SqlToParquetCommand extends Command
             $schema = new Schema($schema);
 
             $fileName = DB::getDatabaseName() . '_' . $table . '.parquet';
-            $fileStream = fopen(__DIR__.'/'. $fileName, 'w+');
-
-            $metadata = ['author'=>'danburykline', 'dateTime' => $dbDateTime];
+            $fileStream = fopen(__DIR__ . '/' . $fileName, 'w+');
 
             $parquetWriter = new ParquetWriter($schema, $fileStream);
-            $parquetWriter->setCustomMetadata($metadata);
             $groupWriter = $parquetWriter->CreateRowGroup();
 
             foreach ($groups as $group) {
@@ -114,18 +140,18 @@ class SqlToParquetCommand extends Command
 
             $this->info('Created parquet file for table: ' . $table);
 
-            $filePath = $dbEnv .'/'. $dbClient .'/'.$fileName;
-            $fileContent = fopen(__DIR__.'/'. $fileName, 'r+');
+            $filePath = $dbEnv . '/' . $dbClient . '/' . $fileName;
+            $fileContent = fopen(__DIR__ . '/' . $fileName, 'r+');
 
             // uploads file to S3.
-            Storage::disk('s3')-> put($filePath, $fileContent);
-            $this->info('Filename: ' . $table  .' uploaded to s3');
+            Storage::disk('s3')->put($filePath, $fileContent);
+            $this->info('Filename: ' . $table . ' uploaded to s3');
 
             $this->deleteFile($fileName, $table);
 
             $this->newLine();
         }
-        return;
+            return;
     }
 
     /**
